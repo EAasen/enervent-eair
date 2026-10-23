@@ -48,6 +48,24 @@ secret files are excluded by `.gitignore`.
 
 ## Support
 
+### Setup reports `cannot_connect`
+
+If you installed version 0.1.0, update to **0.1.1 or later** in HACS and
+restart Home Assistant before trying to add the integration again. Version
+0.1.1 fixes device routing and status-stream handling during setup.
+
+To update, open **HACS → Enervent eAir** and select **Update** if offered.
+If no update appears, use the repository's **⋮ → Redownload** action and
+select the latest version, then restart Home Assistant.
+
+If setup still fails, go to **Settings → System → Logs**, find an entry
+from `custom_components.enervent_eair`, and include its
+`Enervent setup failed` message when reporting the problem. The message
+identifies whether the failure happened during the Socket.IO handshake,
+authentication, model request, or device status stream. Do not share your
+serial number or PIN. Also check whether the unit is online in the Enervent
+web portal.
+
 Please include your Home Assistant version and relevant redacted logs when
 reporting a problem. Never include your serial number, PIN, session IDs, or
 unredacted network captures.

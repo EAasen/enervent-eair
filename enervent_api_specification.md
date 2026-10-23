@@ -17,9 +17,9 @@ The capture contains the web client's actual Socket.IO communication, not a conv
 | Same Socket.IO polling URL with `sid` | `GET` | No body. | HTTP 200; namespace-connect packet (`40{...}`). | Entries 10 and 13, 12:12:13.507Z and 12:12:13.543Z |
 | `wss://my.enervent.com/socket.io/?EIO=4&transport=websocket&sid=…` | WebSocket upgrade | Engine.IO v4 upgrade; standard WebSocket `Upgrade`, `Connection`, `Sec-WebSocket-*`, and `Origin` headers. No session-cookie or `Authorization` header observed. | HTTP 101; Engine.IO ping/pong and Socket.IO `message` events. | Entry 15, 12:12:13.560Z |
 | `message` Socket.IO event | Client → server | Event packet `42["message","<JSON string>"]`. Authentication body: `{"type":"backend","data":{"type":"auth","cmd":"loginWithPin","serialnumber":"…","pin":"…"},"_id":N}`. | Ack body has `type:"backend"`, `_ack:N`, `status:"success"`, `sessid:null`, and `data` containing `mac`, `login`, and `gdprConsent`. A rejection body/status was not captured. | Entry 15, frames 3–4 |
-| `message` Socket.IO event: model and snapshot | Client → server | `{"type":"ucp","data":{"type":"command","command":"model"},"_id":N}` then `{"type":"ucp","dst":"<device mac>","data":{"type":"command","command":"dump"},"_id":N}`. | Acked UCP response; model has `model.items`, `model.enumerations`, `dynamic`, and `machineType`. Snapshot data is register-ID keyed. | Entry 15, frames 5–8; initial model observed in response and stream |
+| `message` Socket.IO event: model and snapshot | Client → server | `{"type":"ucp","dst":"<device mac>","data":{"type":"command","command":"model"},"_id":N}` then `{"type":"ucp","dst":"<device mac>","data":{"type":"command","device":"<device mac>","command":"dump"},"_id":N}`. | The model request receives an acknowledgement; the dump does not. Current status arrives in successive `changes` events. | Entry 15, frames 5–8 and subsequent stream |
 | `message` Socket.IO event: live updates | Server → client | UCP change packet with `data.type:"changes"`, `data.registers:[integer,…]`, and `data.data:[number,…]`; arrays correspond positionally. | WebSocket stream; values update incrementally. No HTTP status code applies. | Entry 15, 6,200 `changes` events; representative message shape captured throughout the connection |
-| `message` Socket.IO event: register write | Client → server | `{"type":"ucp","dst":"<device mac>","data":{"type":"command","command":"write","id":<register id>,"value":<integer>},"_id":N}`. | UCP ack. Successful writes were observed for register IDs 799, 10003, 10010, 10047, and 10055. Register 799 is the device's ping register, not a user control. | Entry 15, frames 635–5975; see evidence ledger |
+| `message` Socket.IO event: register write | Client → server | `{"type":"ucp","dst":"<device mac>","data":{"type":"command","command":"write","id":<register id>,"value":<integer>},"_id":N}`. | Ping-register writes receive `_ack` with a register update. Control writes are followed by unacknowledged `changes` events; do not require `_ack` to confirm a control if the stream reports its requested value. Register 799 is the device's ping register, not a user control. | Entry 15, frames 635–5975; see evidence ledger |
 | `https://my.enervent.com/api` | `POST` | JSON body has `q` and `p`; observed `q` is `rmi.core.UI.translation`. Standard browser JSON request headers. | HTTP 200, JSON translation dictionaries, not device state. | Entry 57, 12:12:15.138Z |
 | `https://my.enervent.com/logAll.tsv` | `GET` | Query parameters observed: `opt[device]`, `opt[socketId]`, `opt[dynamic]`, `opt[time]`. Values are account/device/session-specific and omitted here. | HTTP 200, `text/tab-separated-values`; historical log export. | Entry 97, 12:13:34.664Z |
 
@@ -91,7 +91,7 @@ The following schemas omit volatile identifiers and payload values. Numeric regi
 ```
 
 ```jsonc
-// Dump snapshot acknowledgement; keys are Modbus register IDs
+// Historical get_log acknowledgement, NOT a dump response
 {
   "type": "ucp",
   "_ack": "integer",
@@ -136,7 +136,9 @@ The response's `data.mac` is used as the `dst` for unit-directed UCP commands. T
 
 ### Snapshot and updates
 
-The client first requests the model, then a device dump. The model's 825 item records provide labels, Modbus register identifiers (`mbreg`), data type, scale, bounds, and read/write metadata. The live stream delivers register changes as aligned ID/value arrays. For temperature registers, raw integers are tenths of a degree Celsius (divide by 10); humidity, pressure, fan percent, and efficiency use scale 1 as indicated by the model's format/scale fields.
+The client first requests the model with `dst`, then a device dump with both `dst` and `data.device`. The dump request (`_id:3`, frame 7) has no matching `_ack` in the capture. Initial status instead arrives in batches of `changes` messages. The array of register-keyed records acknowledged at frame 106 belongs to the historical `get_log` request (`_id:4`, frame 95), not to `dump`.
+
+The model's 825 item records provide labels, Modbus register identifiers (`mbreg`), data type, scale, bounds, and read/write metadata. The live stream delivers register changes as aligned ID/value arrays. For temperature registers, raw integers are tenths of a degree Celsius (divide by 10); humidity, pressure, fan percent, and efficiency use scale 1 as indicated by the model's format/scale fields.
 
 ### Writes
 
@@ -179,7 +181,7 @@ The supported Home preset clears the Away, Away-long, Manual-boost, and Overpres
 | 30 | `HREG_LTO_N_EXT` | % | Heat-recovery efficiency, extract side |
 | 35 | `HREG_RH_MEAN` | % RH | 48-hour average relative humidity |
 | 44 | `HREG_MODE` | bit mask / enum | Current operation/display state. The captured enum maps Home=0, Away=16, Away long=32, Manual boost=512, Overpressure=1024, HRC defrosting=32768, among other values. |
-| 46 | `HREG_ROOM_TEMP` | °C; raw ÷ 10 | Average room temperature used by the climate entity |
+| 46 | `HREG_ROOM_TEMP` | °C; raw ÷ 10 | Average room temperature; exposed as a sensor, not the supply-air climate measurement |
 | 53 | `HREG_FANSPEED` | % | Legacy shared fan-speed request; writable `RW`, model bounds 20–100 |
 | 135 | `HREG_T_SETPOINT` | °C; raw ÷ 10 | Writable supply-air setpoint |
 | 140–141 | `HREG_SP_MIN`, `HREG_SP_MAX` | °C | Configured minimum/maximum supply-air setpoint; model bounds are 10–35 °C |
@@ -216,6 +218,10 @@ There are no explicit `temp_supply`, `fan_pct`, CO₂, filter-dirty, or post-hea
 | Authentication uses `loginWithPin` and `serialnumber`/`pin` fields | Entry 15, frame 3 | Observed |
 | Auth ack returns `mac`, `login`, `gdprConsent`; `sessid` is null | Entry 15, frame 4 (values intentionally omitted) | Observed |
 | Model and dump are requested with UCP `command:"model"` and `command:"dump"` | Entry 15, frames 5 and 7 | Observed |
+| Model needs device routing; dump carries both `dst` and `data.device` | Entry 15, frames 5 and 7; `data.device` equals `dst` in frame 7 | Observed |
+| Dump status is streamed, not acknowledged | Entry 15, frame 7 (`_id:3`); no `_ack:3` anywhere in the connection; current registers appear in subsequent `changes` batches | Observed |
+| Supply temperature, operating mode, and target setpoint arrive separately | Entry 15, frames 8 (register 8), 20 (register 44), and 29 (register 135) | Observed |
+| Historical register records must not be confused with the initial status dump | Entry 15, frames 95 (`get_log`, `_id:4`) and 106 (`_ack:4`, array of historical records) | Observed |
 | Device has a model containing 825 items and an enumeration dictionary | Entry 15, initial UCP model response; inspected field names and model metadata | Observed |
 | State is a stream of register-ID/value arrays in `changes` messages | Entry 15, 6,200 `message` events of type `ucp`, data type `changes` | Observed |
 | Generic register writes use UCP `command:"write"` with `id` and integer `value` | Entry 15, frames 635, 1123, 1777, 1798, 1817, 2330, 2404, 2494, 2497, 2498, 2499, 2509, 3182, 3884, 4590, 5281, 5975 | Observed |
@@ -229,5 +235,7 @@ There are no explicit `temp_supply`, `fan_pct`, CO₂, filter-dirty, or post-hea
 ## Integration implementation notes
 
 `custom_components/enervent_eair/` implements the observed Engine.IO polling handshake, WebSocket upgrade, PIN auth event, model/dump requests, register stream merge, and generic integer register write. The coordinator requests a fresh register dump at the configured interval (default 30 seconds) while also accepting the server's live stream. If the socket is lost, the next status update re-authenticates and reloads the model and snapshot. Credentials are serial number and PIN because those are the captured auth fields.
+
+Version 0.1.1 corrects the model routing and dump response handling from 0.1.0. Login and polling wait for fresh supply temperature (8), mode (44), and target temperature (135) registers rather than a nonexistent dump acknowledgement or an unrelated ping-register update. Control writes can complete on a matching streamed register update without `_ack`; already-satisfied writes are skipped. Timeout diagnostics identify the connection stage without logging request payloads or credentials.
 
 The integration's Away/Home presets are an evidence-based register mapping, not a captured sequence of UI mode changes. They should be validated against the installed unit before relying on them for safety-critical ventilation behavior. No live request is made against the unit by this implementation during this analysis.

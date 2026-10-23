@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api_client import EnerventApiClient, EnerventApiError
 from .const import (
@@ -14,10 +16,15 @@ from .const import (
     CONF_SCAN_INTERVAL,
     CONF_SERIAL_NUMBER,
     DEFAULT_SCAN_INTERVAL,
-    DOMAIN,
-    PLATFORMS,
 )
 from .coordinator import EnerventDataUpdateCoordinator
+
+PLATFORMS = [
+    Platform.CLIMATE,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+]
 
 
 @dataclass
@@ -36,7 +43,7 @@ async def async_setup_entry(
 ) -> bool:
     """Set up an Enervent eAir config entry."""
     client = EnerventApiClient(
-        hass,
+        async_get_clientsession(hass),
         entry.data[CONF_SERIAL_NUMBER],
         entry.data[CONF_PIN],
     )

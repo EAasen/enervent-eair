@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
@@ -13,6 +16,8 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 from .api_client import (
     EnerventApiClient,
@@ -45,7 +50,7 @@ class EnerventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             serial_number = str(user_input[CONF_SERIAL_NUMBER]).strip()
             pin = str(user_input[CONF_PIN]).strip()
             client = EnerventApiClient(
-                self.hass,
+                async_get_clientsession(self.hass),
                 serial_number,
                 pin,
             )
@@ -53,7 +58,8 @@ class EnerventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await client.async_login()
             except EnerventAuthError:
                 errors["base"] = "invalid_auth"
-            except (EnerventConnectionError, EnerventApiError):
+            except (EnerventConnectionError, EnerventApiError) as err:
+                _LOGGER.warning("Enervent setup failed: %s", err)
                 errors["base"] = "cannot_connect"
             else:
                 await self.async_set_unique_id(

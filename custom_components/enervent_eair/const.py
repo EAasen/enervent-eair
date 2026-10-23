@@ -1,7 +1,5 @@
 """Constants for the Enervent eAir integration."""
 
-from homeassistant.const import Platform
-
 DOMAIN = "enervent_eair"
 API_URL = "https://my.enervent.com"
 
@@ -36,10 +34,3 @@ PRESET_WRITES = {
     "Boost": {10001: 0, 10002: 0, 10010: 1, 10003: 0},
     "Overpressure": {10001: 0, 10002: 0, 10010: 0, 10003: 1},
 }
-
-PLATFORMS = [
-    Platform.CLIMATE,
-    Platform.SENSOR,
-    Platform.BINARY_SENSOR,
-    Platform.SWITCH,
-]

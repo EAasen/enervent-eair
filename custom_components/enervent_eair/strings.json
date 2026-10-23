@@ -13,7 +13,7 @@
     },
     "error": {
       "invalid_auth": "The serial number or PIN was rejected.",
-      "cannot_connect": "Unable to connect to the Enervent cloud or unit."
+      "cannot_connect": "Unable to connect to the Enervent cloud or receive unit status. Check the Home Assistant logs for the failed connection step."
     },
     "abort": {
       "already_configured": "This unit is already configured."
