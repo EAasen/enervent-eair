@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Enervent eAir",
+        "description": "Enter the unit serial number and its cloud PIN.",
+        "data": {
+          "serial_number": "Serial number",
+          "pin": "PIN",
+          "scan_interval": "Status update interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The serial number or PIN was rejected.",
+      "cannot_connect": "Unable to connect to the Enervent cloud or unit."
+    },
+    "abort": {
+      "already_configured": "This unit is already configured."
+    }
+  }
+}

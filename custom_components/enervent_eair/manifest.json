@@ -1,0 +1,10 @@
+{
+  "domain": "enervent_eair",
+  "name": "Enervent eAir",
+  "codeowners": ["@eaasen"],
+  "config_flow": true,
+  "documentation": "https://my.enervent.com/",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}

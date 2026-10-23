@@ -1,0 +1,9 @@
+# Browser and proxy captures can contain authentication material.
+*.har
+*.har.zip
+
+# Local secrets and environment configuration.
+.env
+.env.*
+secrets.yaml
+secrets.yml
