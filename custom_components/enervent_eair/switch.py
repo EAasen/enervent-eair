@@ -9,12 +9,13 @@ from homeassistant.components.switch import (
     SwitchEntity,
     SwitchEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import EnerventConfigEntry
 from .api_client import EnerventApiError
-from .const import DOMAIN
+from .const import DOMAIN, WEEKDAY_BITS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -22,6 +23,29 @@ class EnerventSwitchDescription(SwitchEntityDescription):
     """Describe a writable Enervent override."""
 
     register: int
+    mask: int | None = None
+
+
+_SNC_WEEKDAYS_REGISTER = 97
+_WEEKDAY_NAMES = {
+    "mon": "Monday",
+    "tue": "Tuesday",
+    "wed": "Wednesday",
+    "thu": "Thursday",
+    "fri": "Friday",
+    "sat": "Saturday",
+    "sun": "Sunday",
+}
+
+
+def _setting(key: str, name: str, register: int, icon: str) -> EnerventSwitchDescription:
+    return EnerventSwitchDescription(
+        key=key,
+        name=name,
+        icon=icon,
+        register=register,
+        entity_category=EntityCategory.CONFIG,
+    )
 
 
 SWITCHES = (
@@ -36,6 +60,51 @@ SWITCHES = (
         name="Overpressure mode",
         icon="mdi:fan-chevron-up",
         register=10003,
+    ),
+    EnerventSwitchDescription(
+        key="away",
+        name="Away mode",
+        icon="mdi:home-export-outline",
+        register=10001,
+    ),
+    EnerventSwitchDescription(
+        key="away_long",
+        name="Away long mode",
+        icon="mdi:airplane",
+        register=10002,
+    ),
+    EnerventSwitchDescription(
+        key="silent_mode",
+        name="Silent mode",
+        icon="mdi:volume-off",
+        register=10047,
+    ),
+    _setting("hrc_defrost", "Heat recovery defrosting", 10055, "mdi:snowflake-melt"),
+    _setting(
+        "summer_night_cooling",
+        "Summer night cooling",
+        10012,
+        "mdi:weather-night",
+    ),
+    _setting(
+        "summer_night_cooling_block_active_cooling",
+        "Summer night cooling: active cooling blocked",
+        10015,
+        "mdi:snowflake-off",
+    ),
+    _setting("humidity_boost", "Humidity boost", 10009, "mdi:water-percent"),
+    _setting("co2_boost", "CO2 boost", 10008, "mdi:molecule-co2"),
+    _setting("temperature_boost", "Temperature boost", 10011, "mdi:thermometer-chevron-up"),
+    *(
+        EnerventSwitchDescription(
+            key=f"summer_night_cooling_{day}",
+            name=f"Summer night cooling on {name}",
+            icon="mdi:calendar-week",
+            register=_SNC_WEEKDAYS_REGISTER,
+            mask=WEEKDAY_BITS[day],
+            entity_category=EntityCategory.CONFIG,
+        )
+        for day, name in _WEEKDAY_NAMES.items()
     ),
 )
 
@@ -73,24 +142,28 @@ class EnerventSwitch(CoordinatorEntity, SwitchEntity):
     def is_on(self) -> bool | None:
         """Return the current switch state."""
         value = self.coordinator.data.get(self.entity_description.register)
-        return None if value is None else bool(value)
+        if value is None:
+            return None
+        if self.entity_description.mask is not None:
+            return bool(int(value) & self.entity_description.mask)
+        return bool(value)
+
+    async def _async_set(self, enabled: bool) -> None:
+        description = self.entity_description
+        client = self.coordinator.client
+        try:
+            if description.mask is not None:
+                await client.async_set_bit(description.register, description.mask, enabled)
+            else:
+                await client.async_set_switch(description.register, enabled)
+        except EnerventApiError as err:
+            raise HomeAssistantError(str(err)) from err
+        self.coordinator.async_set_updated_data(dict(client.registers))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable the override."""
-        try:
-            await self.coordinator.client.async_set_switch(
-                self.entity_description.register, True
-            )
-        except EnerventApiError as err:
-            raise HomeAssistantError(str(err)) from err
-        await self.coordinator.async_request_refresh()
+        """Enable the setting or override."""
+        await self._async_set(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable the override."""
-        try:
-            await self.coordinator.client.async_set_switch(
-                self.entity_description.register, False
-            )
-        except EnerventApiError as err:
-            raise HomeAssistantError(str(err)) from err
-        await self.coordinator.async_request_refresh()
+        """Disable the setting or override."""
+        await self._async_set(False)

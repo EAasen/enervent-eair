@@ -26,14 +26,62 @@ directory's `custom_components` folder, restart Home Assistant, and add
 ## Entities
 
 - A climate entity for supply-air temperature and supported operating presets.
+- An **Operating mode** select: Home, Away, Away long, Boost, Overpressure.
 - Sensors for captured temperatures, fan percentages, humidity, filter
   pressure, heat-recovery efficiency, and the service reminder.
-- Binary sensors for alarm A, alarm B, and HRC defrosting.
-- Switches for manual boost and overpressure mode.
+- Binary sensors for alarm A, alarm B, HRC defrosting, and active time program.
+- Switches for manual boost, overpressure, Away, Away long, and silent mode.
+
+### Settings (0.1.4)
+
+These appear under the device's **Configuration** section. The device must
+report the setting before it can be changed.
+
+| Area | Entities |
+|---|---|
+| Defrost | Heat recovery defrosting (switch) |
+| Winter | Winter boost limit temperature, Summer/winter limit temperature |
+| Summer night cooling | On/off; active cooling blocked; start, stop, and lowest outdoor temperature; min temperature difference; supply/extract air %; start/stop hour; one switch per weekday |
+| Humidity boost | On/off, limit value % RH, 48 h threshold % RH |
+| CO₂ boost | On/off, limit value ppm |
+| Temperature boost | On/off, measurement select (extract air / room average) |
+| Away / Boost / Overpressure / Silent | Fan speeds, Away temperature drops, overpressure and silent durations |
+
+**System info** (diagnostic sensors): software version, hardware version,
+unit family, heat recovery type, heater type, cooling unit type, and a
+**Weekly time programs** sensor. It shows the number of active slots, and
+its `programs` attribute lists them.
+
+### Weekly time programs
+
+The unit has 20 weekly program slots. Edit them with services, for example in
+**Developer tools → Actions**:
+
+```yaml
+action: enervent_eair.set_week_program
+data:
+  slot: 1
+  weekdays: [mon, tue, wed, thu, fri]
+  start: "08:00"
+  stop: "16:00"
+  action: Away   # Away, Boost, Temperature drop, Max heating, ...
+```
+
+```yaml
+action: enervent_eair.clear_week_program
+data:
+  slot: 1
+```
+
+Settings and program writes use the same generic register write as the
+Enervent web app. The register numbers, scales, and limits come from the
+unit's own model data. However, most of these setting writes were not
+captured, so check the result in the Enervent app the first time. A write that
+the unit does not confirm is reported as an error in Home Assistant.
 
 The integration uses the observed serial-number/PIN login flow and the cloud
 Socket.IO connection. It does not provide a username/password login. Some
-features (including CO₂, filter-dirty status, Fireplace mode, and post-heater
+features (including filter-dirty status, Fireplace mode, and post-heater
 state) are not exposed because their mappings were not established from the
 capture. See [the API specification](enervent_api_specification.md) for the
 captured protocol, register mappings, and evidence notes.

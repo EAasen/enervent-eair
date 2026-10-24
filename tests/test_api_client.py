@@ -260,6 +260,45 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.sent)
         self.assertIsNone(self.client._ws)
 
+    async def test_signed_setting_write_uses_twos_complement(self) -> None:
+        await self.client.login()
+        await self.client.async_write_register(157, -50)
+        write = [m for m in self.sent if m["data"].get("id") == 157][-1]
+        self.assertEqual(write["data"]["value"], 65486)
+        self.assertEqual(self.client.registers[157], -50)
+
+    async def test_bit_write_keeps_other_weekdays(self) -> None:
+        self.registers[97] = 127
+        await self.client.login()
+        await self.client.async_set_bit(97, 4, False)
+        self.assertEqual(self.client.registers[97], 123)
+        await self.client.async_set_bit(97, 4, True)
+        self.assertEqual(self.client.registers[97], 127)
+
+    async def test_week_program_write_and_read(self) -> None:
+        for register in range(216, 222):
+            self.registers[register] = 0
+        await self.client.login()
+        await self.client.async_set_week_program(2, 0b0111110, 7, 30, 16, 0, 1)
+        self.assertEqual(
+            self.client.get_week_program(2),
+            {
+                "slot": 2,
+                "weekdays": 62,
+                "start_hour": 7,
+                "start_minute": 30,
+                "stop_hour": 16,
+                "stop_minute": 0,
+                "action": 1,
+            },
+        )
+        ids = [m["data"]["id"] for m in self.sent if m["data"].get("command") == "write"]
+        self.assertEqual(ids[-1], 221)
+        with self.assertRaises(api.EnerventApiError):
+            await self.client.async_set_week_program(21, 1, 0, 0, 1, 0, 1)
+        with self.assertRaises(api.EnerventApiError):
+            await self.client.async_set_week_program(1, 1, 0, 0, 1, 0, 2)
+
     async def test_polling_keeps_stream_alive_without_new_dump(self) -> None:
         await self.client.login()
         self.pending_changes = {8: 220}

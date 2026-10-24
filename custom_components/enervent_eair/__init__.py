@@ -18,12 +18,15 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
 )
 from .coordinator import EnerventDataUpdateCoordinator
+from .services import async_register_services
 
 PLATFORMS = [
     Platform.CLIMATE,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.SWITCH,
+    Platform.NUMBER,
+    Platform.SELECT,
 ]
 
 
@@ -63,6 +66,7 @@ async def async_setup_entry(
 
     entry.runtime_data = EnerventRuntimeData(client, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_register_services(hass)
     return True
 
 

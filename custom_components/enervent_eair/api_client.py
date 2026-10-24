@@ -25,6 +25,9 @@ from .const import (
     REGISTER_TARGET_TEMP,
     SIGNED_REGISTERS,
     STREAM_STALE_TIMEOUT,
+    WEEK_PROGRAM_ACTIONS,
+    WEEK_PROGRAM_FIRST_REGISTER,
+    WEEK_PROGRAM_SLOTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +69,13 @@ class EnerventCertificateError(EnerventConnectionError):
     """The cloud certificate could not be validated."""
 
 
+def _week_program_base(slot: int) -> int:
+    """Return the first register (weekday mask) of a weekly program slot."""
+    if not 1 <= slot <= WEEK_PROGRAM_SLOTS:
+        raise EnerventApiError(f"Time program slot must be 1-{WEEK_PROGRAM_SLOTS}")
+    return WEEK_PROGRAM_FIRST_REGISTER + (slot - 1) * 6
+
+
 class EnerventApiClient:
     """Maintain an authenticated Socket.IO session with an eAir unit."""
 
@@ -101,6 +111,11 @@ class EnerventApiClient:
     def device_id(self) -> str | None:
         """Return the device identifier received after authentication."""
         return self._device_id
+
+    @property
+    def registers(self) -> dict[int, int | float]:
+        """Return a copy of the live register cache."""
+        return dict(self._registers)
 
     async def async_login(self) -> None:
         """Authenticate and load the model and current register snapshot."""
@@ -254,6 +269,78 @@ class EnerventApiClient:
     async def async_set_switch(self, register: int, enabled: bool) -> None:
         """Set one supported binary override."""
         await self._async_write_register(register, int(enabled))
+
+    async def async_write_register(self, register: int, value: int) -> None:
+        """Write one register value in decoded (signed where applicable) form."""
+        await self._async_write_register(register, int(value))
+
+    async def async_set_bit(self, register: int, mask: int, enabled: bool) -> None:
+        """Set or clear bits in a bit-field register, keeping the other bits."""
+        async with self._write_lock:
+            if not self._is_connected or not self._authenticated:
+                await self.async_login()
+            current = self._registers.get(register)
+            if current is None:
+                raise EnerventApiError(f"Register {register} has not been read yet")
+            current = int(current)
+            value = current | mask if enabled else current & ~mask & 0xFFFF
+            await self._async_write_register_unlocked(register, value)
+
+    def get_week_program(self, slot: int) -> dict[str, int] | None:
+        """Return one weekly time program slot (1-20) from the register cache."""
+        base = _week_program_base(slot)
+        values = [self._registers.get(base + offset) for offset in range(6)]
+        if any(value is None for value in values):
+            return None
+        days, start_hour, start_minute, stop_hour, stop_minute, action = (
+            int(value) for value in values
+        )
+        return {
+            "slot": slot,
+            "weekdays": days,
+            "start_hour": start_hour,
+            "start_minute": start_minute,
+            "stop_hour": stop_hour,
+            "stop_minute": stop_minute,
+            "action": action,
+        }
+
+    async def async_set_week_program(
+        self,
+        slot: int,
+        weekdays: int,
+        start_hour: int,
+        start_minute: int,
+        stop_hour: int,
+        stop_minute: int,
+        action: int,
+    ) -> None:
+        """Write one weekly time program slot.
+
+        Action 0 ("No action") disables the slot. Times are written before
+        the action so the unit never sees an active slot with stale times.
+        """
+        base = _week_program_base(slot)
+        if not 0 <= weekdays <= 0x7F:
+            raise EnerventApiError("Weekdays must be a 7-bit Sun..Sat mask")
+        for name, value, upper in (
+            ("start hour", start_hour, 23),
+            ("start minute", start_minute, 59),
+            ("stop hour", stop_hour, 24),
+            ("stop minute", stop_minute, 59),
+        ):
+            if not 0 <= value <= upper:
+                raise EnerventApiError(f"Invalid {name}: {value}")
+        if action not in WEEK_PROGRAM_ACTIONS:
+            raise EnerventApiError(f"Unsupported time program action: {action}")
+        async with self._write_lock:
+            if action:
+                await self._async_write_register_unlocked(base + 5, 0)
+            for offset, value in enumerate(
+                (weekdays, start_hour, start_minute, stop_hour, stop_minute)
+            ):
+                await self._async_write_register_unlocked(base + offset, value)
+            await self._async_write_register_unlocked(base + 5, action)
 
     async def async_close(self) -> None:
         """Close the active cloud connection."""
@@ -460,6 +547,10 @@ class EnerventApiClient:
             raise EnerventConnectionError("The unit is not authenticated")
         if self._registers.get(register) == value:
             return
+        if not -32768 <= value <= 65535:
+            raise EnerventApiError(f"Value {value} does not fit register {register}")
+        # Signed values travel as 16-bit two's complement, as the unit streams them.
+        value &= 0xFFFF
         self._connection_stage = "register write confirmation"
         await self._request(
             {

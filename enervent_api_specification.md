@@ -238,7 +238,41 @@ There are no explicit `temp_supply`, `fan_pct`, CO₂, filter-dirty, or post-hea
 
 ## Integration implementation notes
 
-`custom_components/enervent_eair/` implements the observed Engine.IO polling handshake, WebSocket upgrade, PIN auth event, model/dump requests, register stream merge, and generic integer register write. The coordinator requests a fresh register dump at the configured interval (default 30 seconds) while also accepting the server's live stream. If the socket is lost, the next status update re-authenticates and reloads the model and snapshot. Credentials are serial number and PIN because those are the captured auth fields.
+`custom_components/enervent_eair/` implements the observed Engine.IO polling handshake, WebSocket upgrade, PIN auth event, model/dump requests, register stream merge, and generic integer register write. Since 0.1.3, the coordinator requests a dump only at login. At each interval (default 30 seconds), it sends the register-799 live-view keepalive and reads the streamed register cache. If the socket is lost, the next status update re-authenticates and reloads the model and snapshot. Credentials are serial number and PIN because those are the captured auth fields.
+
+### Settings and time programs (0.1.4)
+
+Settings use the same generic `write` command. Register, type, scale, bounds and enumeration come from the captured model (frame 6). The values streamed in the initial dump match the web UI settings shown by the user. Values are written in raw form after scaling. Signed `int16` values are sent as 16-bit two's complement, the same form the unit streams. Bit-field registers (weekday masks) are read, modified, and written in full.
+
+| Setting | Register | Symbol | Type / scale / bounds | Captured value |
+|---|---:|---|---|---|
+| HRC defrosting | 10055 | `COIL_LTO_DEFROST_EN` | coil, enabledisable | 0 (write observed) |
+| Winter boost limit temperature | 157 | `HREG_LTO_FORCE_T` | int16 /10, −10…20 °C | 80 = 8.0 °C |
+| Summer/winter limit temperature | 137 | `HREG_TE01_SUMMER_WINTER_THRESHOLD` | int16 /10, −10…15 °C | 40 = 4.0 °C |
+| Summer night cooling | 10012 | `COIL_SNC` | coil | 1 |
+| SNC active cooling blocked | 10015 | `COIL_SNC_NO_ACTIVE_COOLING` | coil | 1 |
+| SNC start / stop temperature | 94 / 95 | `HREG_SNC_START` / `HREG_SNC_STOP` | int16 /10, 8…30 °C | 25.0 / 21.0 °C |
+| SNC lowest outdoor temperature | 93 | `HREG_SNC_OUT_T` | int16 /10, 8…30 °C | 10.0 °C |
+| SNC min temperature difference | 96 | `HREG_SNC_DIF` | int16 /10, 0…5 °C | 1.0 °C |
+| SNC supply / extract air | 89 / 90 | `HREG_SNC_TF_FANSPEED` / `HREG_SNC_PF_FANSPEED` | 20…100 % | 55 / 55 |
+| SNC start / stop hour | 98 / 99 | `HREG_SNC_HOUR_START` / `HREG_SNC_HOUR_STOP` | 0…23 | 22 / 7 |
+| SNC weekdays | 97 | `HREG_SNC_WEEK` | bitfield Sun=1…Sat=64 | 127 |
+| RH boost | 10009 | `COIL_RH_BOOST_EN` | coil | 0 |
+| RH boost limit / 48 h threshold | 69 / 70 | `HREG_RH_LIM` / `HREG_RH_LIM_A` | 10…100 / 0…100 % | 45 / 15 |
+| CO₂ boost | 10008 | `COIL_CO2_BOOST_EN` | coil | 0 |
+| CO₂ boost limit | 76 | `HREG_CO2_LIM` | 400…3000 ppm (access `NA`) | 1000 |
+| Temperature boost | 10011 | `COIL_TEMP_BOOST_EN` | coil | 0 |
+| Temperature boost measurement | 82 | `HREG_TB_MES_SENS` | enum `tboostsensor`: 9 extract air, 1 room average | 9 |
+| Away / Away long / Silent | 10001 / 10002 / 10047 | coils | — | 0 |
+| Away fan speeds, temperature drops | 100, 102 / 101, 103 | — | 20…100 %; int16 /10 0…15 °C | 40, 40 / 0, 3.0 |
+| Boost fan speeds | 67 / 68 | `HREG_M_BOOST_*_FANSPEED` | 20…100 % | 90 / 90 |
+| Overpressure fan speeds, duration | 54, 55 / 57 | `HREG_OVP_*` | 20…100 %; 1…60 min | 50, 30 / 10 |
+| Silent mode duration | 735 | `HREG_SILENT_DURATION` | 10…120 min | 60 |
+| System info | 597, 598, 599, 653, 171, 154 | family, HW, SW (/100), HRC, heater, cooling type | read only in HA | 23, 3, 1.38, 0, 1, 3 |
+
+Weekly programs WC1–WC20 occupy six registers each, from `210 + 6 × (slot − 1)`. The registers hold the weekday mask, start hour, start minute, stop hour, stop minute, and action, in that order. Action values come from enum `actions`: 0 no action, 1 Away, 3 heating forbidden, 4 cooling forbidden, 5 temperature drop, 6 max heating, 7 max cooling, 16 time relay, 17 boost, 18 circulation air, and 30 run time. For example, WC16 has `HREG_DAY_WC16` = 300 and `HREG_WC16` = 305. The integration first sets the action to 0, writes the times, and then writes the action. Year programs (330–384) are not exposed.
+
+Evidence level: the register definitions and current values are observed. Writes were observed only for 10003, 10010, 10047, and 10055. Other setting writes are inferred from `RW` metadata and the generic writer. Every write must be confirmed by a matching `changes` value, otherwise it fails. `HREG_M_BOOST_TIME` (66) is not exposed: its captured value is 1, while the model label says minutes.
 
 Version 0.1.1 corrects the model routing and dump response handling from 0.1.0. Login and polling wait for fresh supply temperature (8), mode (44), and target temperature (135) registers rather than a nonexistent dump acknowledgement or an unrelated ping-register update. Control writes can complete on a matching streamed register update without `_ack`; already-satisfied writes are skipped. Timeout diagnostics identify the connection stage without logging request payloads or credentials.
 

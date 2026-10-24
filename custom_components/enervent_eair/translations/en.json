@@ -19,5 +19,51 @@
     "abort": {
       "already_configured": "This unit is already configured."
     }
+  },
+  "services": {
+    "set_week_program": {
+      "name": "Set weekly time program",
+      "description": "Write one of the unit's 20 weekly time program slots.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Unit",
+          "description": "Enervent unit; optional when only one is configured."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "Program slot, 1-20."
+        },
+        "weekdays": {
+          "name": "Weekdays",
+          "description": "Days the program runs."
+        },
+        "start": {
+          "name": "Start time",
+          "description": "Time the action starts."
+        },
+        "stop": {
+          "name": "Stop time",
+          "description": "Time the action stops."
+        },
+        "action": {
+          "name": "Action",
+          "description": "Function the unit performs during the program."
+        }
+      }
+    },
+    "clear_week_program": {
+      "name": "Clear weekly time program",
+      "description": "Disable one weekly time program slot.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Unit",
+          "description": "Enervent unit; optional when only one is configured."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "Program slot, 1-20."
+        }
+      }
+    }
   }
 }

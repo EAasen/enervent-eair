@@ -46,6 +46,12 @@ SENSORS = (
         mode_bit=_HRC_DEFROSTING_BIT,
         device_class=BinarySensorDeviceClass.RUNNING,
     ),
+    EnerventBinarySensorDescription(
+        key="clock_program_active",
+        name="Time program active",
+        register=10043,
+        device_class=BinarySensorDeviceClass.RUNNING,
+    ),
 )
 
 

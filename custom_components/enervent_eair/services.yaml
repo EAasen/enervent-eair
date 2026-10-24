@@ -1,0 +1,70 @@
+set_week_program:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: enervent_eair
+    slot:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          mode: box
+    weekdays:
+      required: true
+      example: ["mon", "tue", "wed", "thu", "fri"]
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+    start:
+      required: true
+      example: "08:00"
+      selector:
+        time:
+    stop:
+      required: true
+      example: "16:00"
+      selector:
+        time:
+    action:
+      required: true
+      example: Away
+      selector:
+        select:
+          options:
+            - Away
+            - Heating forbidden
+            - Cooling forbidden
+            - Temperature drop
+            - Max heating
+            - Max cooling
+            - Time relay
+            - Boost
+            - Circulation air
+            - Run time
+clear_week_program:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: enervent_eair
+    slot:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          mode: box

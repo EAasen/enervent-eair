@@ -31,6 +31,34 @@ SIGNED_REGISTERS = frozenset(
     }
 )
 
+# Weekly time programs WC1..WC20: six registers each, starting at 210:
+# weekday mask (Sun=1 .. Sat=64), start hour, start minute, stop hour,
+# stop minute, action (model enumeration "actions").
+WEEK_PROGRAM_FIRST_REGISTER = 210
+WEEK_PROGRAM_SLOTS = 20
+WEEK_PROGRAM_ACTIONS = {
+    0: "No action",
+    1: "Away",
+    3: "Heating forbidden",
+    4: "Cooling forbidden",
+    5: "Temperature drop",
+    6: "Max heating",
+    7: "Max cooling",
+    16: "Time relay",
+    17: "Boost",
+    18: "Circulation air",
+    30: "Run time",
+}
+WEEKDAY_BITS = {
+    "sun": 1,
+    "mon": 2,
+    "tue": 4,
+    "wed": 8,
+    "thu": 16,
+    "fri": 32,
+    "sat": 64,
+}
+
 MODE_PRESETS = {
     "Home": 0,
     "Away": 16,
