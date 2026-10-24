@@ -140,6 +140,10 @@ The client first requests the model with `dst`, then a device dump with both `ds
 
 The model's 825 item records provide labels, Modbus register identifiers (`mbreg`), data type, scale, bounds, and read/write metadata. The live stream delivers register changes as aligned ID/value arrays. For temperature registers, raw integers are tenths of a degree Celsius (divide by 10); humidity, pressure, fan percent, and efficiency use scale 1 as indicated by the model's format/scale fields.
 
+**Signed values (0.1.3).** The model's types are 716 `uint16`, 68 `int16`, 26 `bitfield`, and 15 `enumeration` records. The wire carries unsigned 16-bit values, so `int16` registers must be decoded with two's complement: raw values from 32768 to 65535 are reduced by 65536. All temperature registers (1, 2, 6–12, 46, 135, and so on) are `int16`. Evidence: register 11 (`HREG_T_EXT_LTO`, `int16`, scale 10) streamed `65174` at frame 17. That decodes to −362, or −36.2 °C, not 6517.4 °C. The client reads signed types from the model ack. If the model omits types, it uses the captured list of 68 `int16` registers.
+
+**Live-view keepalive (0.1.3).** After the single dump, the capture shows only incremental `changes`; `dump` is never re-sent. Every 30 s after login, the web app writes register 799 = 1, at t+39.3 s, t+69.3 s, t+99.3 s, and so on, through t+279.3 s. The server acks it with `_ack` and `changes` `{799: 1}`, for example `_id:6` acknowledged at t+39.5 s. The integration polls the same way: one acked keepalive, followed by the cached live register state. If the keepalive is not acknowledged within the timeout, or no device message arrives for 180 s, it reconnects and requests a fresh dump.
+
 ### Writes
 
 The observed generic write contract is one integer register ID and one integer value. The following user controls are backed by the captured model dictionary; only a subset of writes themselves occurred in the recording:

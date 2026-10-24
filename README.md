@@ -48,6 +48,24 @@ secret files are excluded by `.gitignore`.
 
 ## Support
 
+### Very large temperatures or repeated status timeouts
+
+Update to **0.1.3 or later** in HACS and restart Home Assistant.
+
+- **Large temperature values:** Values such as `6517.4 °C` came from
+  negative temperatures being read as unsigned numbers. Version 0.1.3
+  decodes signed `int16` registers from the device model. For example, a raw
+  value of `65174` is now shown as `-36.2 °C`. A constant value around
+  `-36 °C` usually means that the sensor is not connected or not used on
+  that unit.
+- **`Timed out waiting for the device status stream`:** Earlier versions
+  requested a full device dump on every poll. The cloud sends a full dump
+  only once, then sends changes only, so those requests timed out. Version
+  0.1.3 does what the Enervent web app does: each poll sends the live-view
+  keepalive (register 799) and uses the live register stream. If the
+  keepalive is not acknowledged, or if the stream is silent for 3 minutes,
+  the integration reconnects within the same poll.
+
 ### `ClientConnectorCertificateError` during setup
 
 Update to **0.1.2 or later** in HACS, restart Home Assistant, and retry setup.

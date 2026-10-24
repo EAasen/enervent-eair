@@ -44,6 +44,9 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.confirm_writes = True
         self.model_destination = None
         self.dump_count = 0
+        self.keepalive_count = 0
+        self.respond_to_keepalive = True
+        self.pending_changes: dict[int, int] = {}
         self.pong_received = asyncio.Event()
         self.registers = {
             8: 205,
@@ -182,6 +185,28 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                     await self.changes(
                         ws, {k: v for k, v in self.registers.items() if k != 8}
                     )
+            elif data["command"] == "write" and data["id"] == 799:
+                self.keepalive_count += 1
+                if self.respond_to_keepalive:
+                    # HAR frame: the live-view write is acked with a change.
+                    await self.send(
+                        ws,
+                        {
+                            "type": "ucp",
+                            "src": "test-device",
+                            "_ack": message["_id"],
+                            "data": {
+                                "type": "changes",
+                                "registers": [799],
+                                "data": [1],
+                            },
+                        },
+                    )
+                    for register, value in self.pending_changes.items():
+                        self.registers[register] = value
+                    if self.pending_changes:
+                        await self.changes(ws, self.pending_changes)
+                    self.pending_changes = {}
             elif data["command"] == "write":
                 self.registers[data["id"]] = data["value"]
                 # The capture confirms control writes by unacked changes.
@@ -235,15 +260,37 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.sent)
         self.assertIsNone(self.client._ws)
 
-    async def test_polling_waits_for_new_stream_not_cached_registers(self) -> None:
+    async def test_polling_keeps_stream_alive_without_new_dump(self) -> None:
         await self.client.login()
-        self.registers[8] = 220
+        self.pending_changes = {8: 220}
+        status = await self.client.async_get_status()
+        await asyncio.sleep(0.05)
         status = await self.client.async_get_status()
         self.assertEqual(status[8], 220)
+        self.assertEqual(self.dump_count, 1)
+        self.assertEqual(self.keepalive_count, 2)
+        auth_requests = [m for m in self.sent if m["type"] == "backend"]
+        self.assertEqual(len(auth_requests), 1)
+
+    async def test_missing_keepalive_ack_reconnects_within_same_poll(self) -> None:
+        await self.client.login()
+        self.respond_to_keepalive = False
+        status = await self.client.async_get_status()
+        self.assertEqual(status[135], 215)
+        auth_requests = [m for m in self.sent if m["type"] == "backend"]
+        self.assertEqual(len(auth_requests), 2)
         self.assertEqual(self.dump_count, 2)
 
-    async def test_poll_timeout_disconnects_and_next_poll_reauthenticates(self) -> None:
+    async def test_stale_stream_reconnects(self) -> None:
         await self.client.login()
+        self.client._last_device_message -= api.STREAM_STALE_TIMEOUT + 1
+        await self.client.async_get_status()
+        self.assertEqual(self.keepalive_count, 0)
+        self.assertEqual(self.dump_count, 2)
+
+    async def test_poll_reports_error_when_reconnect_fails(self) -> None:
+        await self.client.login()
+        self.respond_to_keepalive = False
         self.respond_to_dump = False
         with self.assertRaises(api.EnerventConnectionError):
             await self.client.async_get_status()
@@ -251,8 +298,35 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.respond_to_dump = True
         status = await self.client.async_get_status()
         self.assertEqual(status[135], 215)
-        auth_requests = [m for m in self.sent if m["type"] == "backend"]
-        self.assertEqual(len(auth_requests), 2)
+
+    async def test_signed_int16_registers_are_decoded(self) -> None:
+        self.registers[11] = 65174
+        self.registers[46] = 65535
+        self.registers[53] = 65000
+        await self.client.login()
+        self.assertEqual(self.client._registers[11], -362)
+        self.assertEqual(self.client._registers[46], -1)
+        self.assertEqual(self.client._registers[53], 65000)
+
+    async def test_model_types_control_signed_decoding(self) -> None:
+        self.client._load_model(
+            {
+                "data": {
+                    "model": {
+                        "items": [
+                            {"mbreg": 900, "type": "int16"},
+                            {"mbreg": 901, "type": "uint16"},
+                        ]
+                    }
+                }
+            }
+        )
+        self.client._store_register(900, 65534)
+        self.client._store_register(901, 65534)
+        self.client._store_register(11, 65174)
+        self.assertEqual(self.client._registers[900], -2)
+        self.assertEqual(self.client._registers[901], 65534)
+        self.assertEqual(self.client._registers[11], -362)
 
     async def test_rejected_credentials_are_auth_error(self) -> None:
         self.reject_auth = True

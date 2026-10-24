@@ -18,6 +18,18 @@ REGISTER_MODE = 44
 REGISTER_MIN_TEMP = 140
 REGISTER_MAX_TEMP = 141
 REGISTER_FAN_SPEED_OVERRIDE = 53
+REGISTER_KEEPALIVE = 799
+STREAM_STALE_TIMEOUT = 180
+# int16 registers from the captured eAir model; used if the model lacks types.
+SIGNED_REGISTERS = frozenset(
+    {
+        1, 2, 6, 7, 8, 9, 10, 11, 12, 16, 31, 32, 33, 46, 47, 48, 49, 93, 94,
+        95, 96, 101, 103, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+        132, 133, 134, 135, 137, 138, 139, 145, 157, 159, 160, 164, 170, 172,
+        173, 174, 177, 178, 196, 591, 592, 593, 601, 626, 627, 628, 629, 630,
+        633, 694, 695, 696, 697, 700, 716,
+    }
+)
 
 MODE_PRESETS = {
     "Home": 0,

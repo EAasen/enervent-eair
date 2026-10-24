@@ -17,11 +17,14 @@ from .const import (
     API_URL,
     PRESET_WRITES,
     REGISTER_FAN_SPEED_OVERRIDE,
+    REGISTER_KEEPALIVE,
     REGISTER_MAX_TEMP,
     REGISTER_MIN_TEMP,
     REGISTER_MODE,
     REGISTER_SUPPLY_TEMP,
     REGISTER_TARGET_TEMP,
+    SIGNED_REGISTERS,
+    STREAM_STALE_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,6 +94,8 @@ class EnerventApiClient:
         self._closing = False
         self._connection_stage = "cloud connection"
         self._ssl_context: ssl.SSLContext | None = None
+        self._last_device_message: float | None = None
+        self._signed_registers: set[int] = set()
 
     @property
     def device_id(self) -> str | None:
@@ -107,6 +112,7 @@ class EnerventApiClient:
             self._closing = False
             self._registers.clear()
             self._state_ready.clear()
+            self._last_device_message = None
 
             try:
                 self._connection_stage = "Socket.IO handshake"
@@ -130,13 +136,14 @@ class EnerventApiClient:
                 self._authenticated = True
 
                 self._connection_stage = "device model request"
-                await self._request(
+                model_response = await self._request(
                     {
                         "type": "ucp",
                         "dst": self._device_id,
                         "data": {"type": "command", "command": "model"},
                     }
                 )
+                self._load_model(model_response)
                 self._connection_stage = "device status stream"
                 await self._async_request_dump()
             except aiohttp.ClientConnectorCertificateError as err:
@@ -169,16 +176,50 @@ class EnerventApiClient:
         await self.async_login()
 
     async def async_get_status(self) -> dict[int, int | float]:
-        """Return the latest register snapshot, reconnecting if needed."""
+        """Return the live register cache, keeping the device stream active.
+
+        The device sends one full dump after login and then only changed
+        registers. The web app keeps that stream alive by writing register
+        799 every 30 seconds, so polling does the same instead of
+        requesting a new dump each time.
+        """
         if not self._is_connected or not self._authenticated:
             await self.async_login()
-        else:
-            try:
-                await self._async_request_dump()
-            except EnerventConnectionError:
-                await self._close_socket()
-                raise
+            return dict(self._registers)
+
+        loop = asyncio.get_running_loop()
+        stale = (
+            self._last_device_message is not None
+            and loop.time() - self._last_device_message > STREAM_STALE_TIMEOUT
+        )
+        try:
+            if stale:
+                raise EnerventConnectionError("The device status stream is stale")
+            await self._async_send_keepalive()
+        except EnerventConnectionError as err:
+            _LOGGER.debug("Reconnecting to the Enervent cloud: %s", err)
+            await self._close_socket()
+            await self.async_login()
         return dict(self._registers)
+
+    async def _async_send_keepalive(self) -> None:
+        """Ask the unit to keep streaming live register changes."""
+        if self._device_id is None:
+            raise EnerventConnectionError("The unit is not authenticated")
+        self._connection_stage = "live-view keepalive"
+        await self._request(
+            {
+                "type": "ucp",
+                "dst": self._device_id,
+                "data": {
+                    "type": "command",
+                    "command": "write",
+                    "id": REGISTER_KEEPALIVE,
+                    "value": 1,
+                },
+            },
+            confirmation=(REGISTER_KEEPALIVE, 1),
+        )
 
     async def async_set_temperature(self, temperature: float) -> None:
         """Set the supply-air temperature setpoint in degrees Celsius."""
@@ -500,6 +541,7 @@ class EnerventApiClient:
             source = message.get("src")
             if source is not None and source != self._device_id:
                 return
+            self._last_device_message = asyncio.get_running_loop().time()
             data = message.get("data")
             if isinstance(data, dict) and data.get("type") == "changes":
                 registers = data.get("registers")
@@ -561,12 +603,42 @@ class EnerventApiClient:
         for register, value in mapping.items():
             self._store_register(register, value)
 
+    def _load_model(self, response: dict[str, Any]) -> None:
+        """Record which registers the device model declares as signed."""
+        data = response.get("data")
+        model = data.get("model") if isinstance(data, dict) else None
+        items = model.get("items") if isinstance(model, dict) else None
+        if not isinstance(items, list):
+            return
+        signed: set[int] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "")).lower()
+            if not item_type.startswith("int"):
+                continue
+            try:
+                signed.add(int(item["mbreg"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if signed:
+            self._signed_registers = signed
+
     def _store_register(self, register: Any, value: Any) -> None:
         try:
             register_id = int(register)
         except (TypeError, ValueError):
             return
         if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if (
+                isinstance(value, int)
+                and 32768 <= value <= 65535
+                and (
+                    register_id in self._signed_registers
+                    or register_id in SIGNED_REGISTERS
+                )
+            ):
+                value -= 65536
             self._registers[register_id] = value
             self._dump_registers.add(register_id)
             if {REGISTER_SUPPLY_TEMP, REGISTER_MODE, REGISTER_TARGET_TEMP}.issubset(
