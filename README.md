@@ -38,13 +38,6 @@ state) are not exposed because their mappings were not established from the
 capture. See [the API specification](enervent_api_specification.md) for the
 captured protocol, register mappings, and evidence notes.
 
-## Credentials and capture files
-
-The serial number and PIN belong in the Home Assistant integration setup,
-not in source files, documentation, issues, or screenshots. The original HAR
-capture is intentionally not included in this repository: it may contain
-authentication data and session identifiers. HAR files and common local
-secret files are excluded by `.gitignore`.
 
 ## Support
 
