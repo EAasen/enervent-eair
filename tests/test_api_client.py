@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 import socket
+import ssl
 import sys
 import types
 import unittest
@@ -196,6 +198,43 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.client._pending)
         await asyncio.wait_for(self.pong_received.wait(), timeout=1)
 
+    async def test_all_handshake_requests_use_the_verified_context(self) -> None:
+        with (
+            patch.object(
+                self.session, "get", wraps=self.session.get
+            ) as get,
+            patch.object(
+                self.session, "post", wraps=self.session.post
+            ) as post,
+            patch.object(
+                self.session, "ws_connect", wraps=self.session.ws_connect
+            ) as ws_connect,
+        ):
+            await self.client.login()
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(ws_connect.call_count, 1)
+        for call in [*get.call_args_list, *post.call_args_list,
+                     *ws_connect.call_args_list]:
+            self.assertIs(call.kwargs["ssl"], self.client._ssl_context)
+            self.assertTrue(call.kwargs["ssl"].check_hostname)
+            self.assertEqual(call.kwargs["ssl"].verify_mode, ssl.CERT_REQUIRED)
+
+    async def test_bad_certificate_fails_before_credentials_are_sent(self) -> None:
+        connection = types.SimpleNamespace(
+            host="my.enervent.com", port=443, is_ssl=True
+        )
+        error = aiohttp.ClientConnectorCertificateError(
+            connection, ssl.SSLCertVerificationError(1, "Untrusted issuer")
+        )
+        with patch.object(self.client, "_open_socket", side_effect=error):
+            with self.assertRaisesRegex(
+                api.EnerventCertificateError, "TLS certificate validation failed"
+            ):
+                await self.client.login()
+        self.assertFalse(self.sent)
+        self.assertIsNone(self.client._ws)
+
     async def test_polling_waits_for_new_stream_not_cached_registers(self) -> None:
         await self.client.login()
         self.registers[8] = 220
@@ -285,6 +324,24 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             api.EnerventConnectionError, "Invalid device register update"
         ):
             await self.client._handle_packet(packet)
+
+
+class CertificateContextTests(unittest.TestCase):
+    """Keep the intermediate as a chain aid, never an independent trust root."""
+
+    def test_context_requires_hostname_and_a_trusted_root(self) -> None:
+        context = api._create_ssl_context()
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertFalse(context.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN)
+        fingerprints = {
+            hashlib.sha256(der).hexdigest()
+            for der in context.get_ca_certs(binary_form=True)
+        }
+        self.assertIn(
+            "ec9d6bcab9818b7dd59ed61da23a658a96a9c4e950edee0d2da93e7cf2174780",
+            fingerprints,
+        )
 
 
 if __name__ == "__main__":

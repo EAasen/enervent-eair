@@ -17,12 +17,11 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-_LOGGER = logging.getLogger(__name__)
-
 from .api_client import (
     EnerventApiClient,
     EnerventApiError,
     EnerventAuthError,
+    EnerventCertificateError,
     EnerventConnectionError,
 )
 from .const import (
@@ -34,6 +33,8 @@ from .const import (
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class EnerventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -58,6 +59,9 @@ class EnerventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await client.async_login()
             except EnerventAuthError:
                 errors["base"] = "invalid_auth"
+            except EnerventCertificateError as err:
+                _LOGGER.warning("Enervent setup failed: %s", err)
+                errors["base"] = "certificate_error"
             except (EnerventConnectionError, EnerventApiError) as err:
                 _LOGGER.warning("Enervent setup failed: %s", err)
                 errors["base"] = "cannot_connect"

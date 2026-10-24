@@ -48,6 +48,25 @@ secret files are excluded by `.gitignore`.
 
 ## Support
 
+### `ClientConnectorCertificateError` during setup
+
+Update to **0.1.2 or later** in HACS, restart Home Assistant, and retry setup.
+On 2026-10-24 the Enervent cloud server was found to omit its intermediate
+certificate. Version 0.1.2 bundles the public **ZeroSSL RSA DV SSL CA 2**
+intermediate so that HTTPS polling and WebSocket connections can build a
+complete certificate chain.
+
+Certificate verification remains enabled: the cloud hostname, certificate
+validity, and chain to a locally trusted root must still pass validation.
+The integration does not trust the intermediate as a standalone root and
+does not disable SSL verification or modify Home Assistant's global trust
+store. Only the Enervent client's requests use the supplied chain.
+
+If a certificate error persists, check Home Assistant's system clock and
+install available Home Assistant updates (including its CA trust store).
+The logs include the certificate validation reason, without credentials.
+Do not use an insecure SSL bypass.
+
 ### Setup reports `cannot_connect`
 
 If you installed version 0.1.0, update to **0.1.1 or later** in HACS and

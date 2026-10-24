@@ -12,6 +12,7 @@
       }
     },
     "error": {
+      "certificate_error": "Unable to verify the Enervent cloud certificate. Update this integration, check the Home Assistant system clock, and check the logs for certificate details. Certificate verification has not been disabled.",
       "invalid_auth": "The serial number or PIN was rejected.",
       "cannot_connect": "Unable to connect to the Enervent cloud or receive unit status. Check the Home Assistant logs for the failed connection step."
     },

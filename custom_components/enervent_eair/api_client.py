@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
+import ssl
 from typing import Any
 from urllib.parse import urlencode
 
@@ -31,6 +33,20 @@ _TEMPERATURE_MIN = 10
 _TEMPERATURE_MAX = 35
 
 
+def _create_ssl_context() -> ssl.SSLContext:
+    """Supply the missing intermediate without trusting it as a root."""
+    context = ssl.create_default_context()
+    context.verify_flags &= ~ssl.VERIFY_X509_PARTIAL_CHAIN
+    context.load_verify_locations(
+        cafile=str(
+            Path(__file__).parent
+            / "certificates"
+            / "zerossl-rsa-dv-ssl-ca-2.pem"
+        )
+    )
+    return context
+
+
 class EnerventApiError(Exception):
     """Base exception for API failures."""
 
@@ -41,6 +57,10 @@ class EnerventAuthError(EnerventApiError):
 
 class EnerventConnectionError(EnerventApiError):
     """The cloud connection failed."""
+
+
+class EnerventCertificateError(EnerventConnectionError):
+    """The cloud certificate could not be validated."""
 
 
 class EnerventApiClient:
@@ -70,6 +90,7 @@ class EnerventApiClient:
         self._authenticated = False
         self._closing = False
         self._connection_stage = "cloud connection"
+        self._ssl_context: ssl.SSLContext | None = None
 
     @property
     def device_id(self) -> str | None:
@@ -118,13 +139,25 @@ class EnerventApiClient:
                 )
                 self._connection_stage = "device status stream"
                 await self._async_request_dump()
+            except aiohttp.ClientConnectorCertificateError as err:
+                await self._close_socket()
+                reason = err.certificate_error
+                detail = getattr(reason, "verify_message", type(reason).__name__)
+                raise EnerventCertificateError(
+                    f"TLS certificate validation failed: {detail}"
+                ) from err
             except EnerventApiError:
                 await self._close_socket()
                 raise
             except asyncio.CancelledError:
                 await self._close_socket()
                 raise
-            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                OSError,
+                ValueError,
+            ) as err:
                 await self._close_socket()
                 raise EnerventConnectionError(
                     f"Failed during {self._connection_stage} "
@@ -197,6 +230,8 @@ class EnerventApiClient:
 
     async def _open_socket(self) -> None:
         """Perform Engine.IO polling handshake and WebSocket upgrade."""
+        if self._ssl_context is None:
+            self._ssl_context = await asyncio.to_thread(_create_ssl_context)
         params = {
             "EIO": _ENGINE_IO_VERSION,
             "transport": "polling",
@@ -204,7 +239,9 @@ class EnerventApiClient:
         url = f"{API_URL}{_SOCKET_PATH}?{urlencode(params)}"
         timeout = aiohttp.ClientTimeout(total=API_TIMEOUT)
 
-        async with self._session.get(url, timeout=timeout) as response:
+        async with self._session.get(
+            url, timeout=timeout, ssl=self._ssl_context
+        ) as response:
             if response.status != 200:
                 raise EnerventConnectionError(
                     f"Socket.IO handshake returned HTTP {response.status}"
@@ -237,13 +274,16 @@ class EnerventApiClient:
             data="40",
             headers={"Content-Type": "text/plain;charset=UTF-8"},
             timeout=timeout,
+            ssl=self._ssl_context,
         ) as response:
             if response.status != 200:
                 raise EnerventConnectionError(
                     f"Socket.IO connect returned HTTP {response.status}"
                 )
             await response.read()
-        async with self._session.get(polling_url, timeout=timeout) as response:
+        async with self._session.get(
+            polling_url, timeout=timeout, ssl=self._ssl_context
+        ) as response:
             if response.status != 200:
                 raise EnerventConnectionError(
                     f"Socket.IO polling returned HTTP {response.status}"
@@ -265,6 +305,7 @@ class EnerventApiClient:
                 ),
                 autoping=True,
                 heartbeat=None,
+                ssl=self._ssl_context,
             )
         await self._ws.send_str("2probe")
         probe = await asyncio.wait_for(self._ws.receive(), timeout=API_TIMEOUT)

@@ -238,4 +238,33 @@ There are no explicit `temp_supply`, `fan_pct`, CO₂, filter-dirty, or post-hea
 
 Version 0.1.1 corrects the model routing and dump response handling from 0.1.0. Login and polling wait for fresh supply temperature (8), mode (44), and target temperature (135) registers rather than a nonexistent dump acknowledgement or an unrelated ping-register update. Control writes can complete on a matching streamed register update without `_ack`; already-satisfied writes are skipped. Timeout diagnostics identify the connection stage without logging request payloads or credentials.
 
+### TLS chain repair (0.1.2)
+
+On 2026-10-24, a credential-free live inspection found that `my.enervent.com:443`
+presented only its leaf certificate (CN `my.enervent.com`, issued by
+`ZeroSSL RSA DV SSL CA 2`, valid 2026-09-11 through 2026-12-10). Both Python
+`aiohttp` and OpenSSL failed ordinary verification with a missing-issuer error.
+This is separate from PIN authentication, which has not run when TLS fails.
+
+The intermediate was obtained from the leaf's public AIA URL:
+`http://crt.sectigo.com/ZeroSSLRSADVSSLCA2.crt`. Its DER SHA-256 is
+`ec9d6bcab9818b7dd59ed61da23a658a96a9c4e950edee0d2da93e7cf2174780`.
+The intermediate is issued by `Sectigo Public Server Authentication Root R46`
+and is valid 2025-09-24 through 2035-09-23. Its public PEM certificate is
+included under `custom_components/enervent_eair/certificates/`.
+
+It supplements a client-specific default SSL context, with partial-chain trust
+disabled: validation must still reach a root in the local trust store. The
+issuer download is not itself used as a trust decision; the locally trusted
+root and certificate signatures authenticate the repaired chain. The same
+verified context covers every HTTPS polling request and the WebSocket upgrade.
+Certificate loading runs outside Home Assistant's event loop. There is no
+runtime issuer download, global trust-store edit, hostname bypass, or disabled
+certificate verification.
+
+Supplying this intermediate with trusted-root and hostname checks enabled
+allowed a credential-free HTTPS Engine.IO handshake to return HTTP 200. No
+serial number or PIN was transmitted as part of that check. This live evidence
+is distinct from the original HAR.
+
 The integration's Away/Home presets are an evidence-based register mapping, not a captured sequence of UI mode changes. They should be validated against the installed unit before relying on them for safety-critical ventilation behavior. No live request is made against the unit by this implementation during this analysis.
